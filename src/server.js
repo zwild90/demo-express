@@ -1,18 +1,40 @@
+import 'dotenv/config';
 import express from 'express';
+import session from 'express-session';
 import bodyParser from 'body-parser';
+import redis from 'redis';
+import connectRedis from 'connect-redis';
+import { v4 as uuid } from 'uuid';
+import users from './services/users.js';
 
 const app = express();
+const store = new session.MemoryStore()
+
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
+app.use(session({
+  name: 'expressdemo.sid',
+  secret: process.env.SESSION_SECRET,
+  cookie: { maxAge: 120000 }, // 2 min
+  saveUninitialized: false,
+  store,
+}));
 
-const users = [
-  { id: 1, name: 'user-one' },
-  { id: 2, name: 'user-two' },
-  { id: 3, name: 'user-three' },
-  { id: 4, name: 'user-four' },
-  { id: 5, name: 'user-five' },
-  { id: 6, name: 'user-six' },
-];
+app.use((req, res, next) => {
+  console.log('req:', req);
+  console.log('req.header:', req.headers);
+  console.log('cookie:', req.cookie);
+  console.log('cookies:', req.cookies);
+  
+  next();
+});
+
+
+// app.use(function (req, res, next) {
+//   res.setHeader('Access-Control-Allow-Origin', '*');
+//   res.setHeader('Content-Type', 'application/json');
+//   next();
+// });
 
 const ERROR_MESSAGES = {
   USER_ID_REQ: 'user id is required',
@@ -20,7 +42,28 @@ const ERROR_MESSAGES = {
   USER_NOT_FOUND: (userId) => `user with id ${userId} not found`
 }
 
+function isAuthorized(req, res) {
+  console.log('Authorizing...')
+  if (!req.session.authorized) {
+    res.status(403).json({ status: 403, message: 'User is not authorized' });
+    return false;
+  }
+  return true;
+}
+
+app.post('/login', function (req, res) {
+  const { username, password } = req.body;
+  if (username && password) {
+    req.session.authorized = true;
+    req.session.user = { username, password };
+    res.json({ status: 200, message: 'logged in', data: req.session });
+  } else {
+    res.status(401).json({ status: 401, message: 'Failed to Authenticate' })
+  }
+});
+
 app.get('/users', function (req, res) {
+  if (!isAuthorized(req, res)) return;
   try {
     console.log('getting all users');
 
@@ -31,10 +74,13 @@ app.get('/users', function (req, res) {
 });
 
 app.get('/users/:userId', function (req, res) {
+  if (!isAuthorized(req, res)) return;
   try {
     console.log('getting a user');
   
-    const userId = Number(req.params.userId);
+    const userId = req.params.userId;
+    console.log('req.params:', req.params);
+    console.log('userId:', userId)
     if (!userId) {
       return res.status(400).json({ status: 400, message: ERROR_MESSAGES.USER_ID_REQ });
     }
@@ -51,6 +97,7 @@ app.get('/users/:userId', function (req, res) {
 });
 
 app.post('/users', function (req, res) {
+  if (!isAuthorized(req, res)) return;
   try {
     console.log('creating a user');
 
@@ -59,14 +106,7 @@ app.post('/users', function (req, res) {
       return res.status(400).json({ status: 400, message: ERROR_MESSAGES.NAME_REQ });
     }
 
-    let id = 1;
-    if (users.length > 0) {
-      const lastIndex = users.length - 1;
-      const lastId = users[lastIndex].id;
-      id = lastId + 1
-    }
-
-    const user = { id: id, name: name };
+    const user = { id: uuid(), name: name };
     users.push(user);
 
     return res.json({ status: 200, message: 'user created', user: user });
@@ -76,10 +116,11 @@ app.post('/users', function (req, res) {
 });
 
 app.put('/users/:userId', function (req, res) {
+  if (!isAuthorized(req, res)) return;
   try {
     console.log('updating a user');
   
-    const userId = Number(req.params.userId);
+    const userId = req.params.userId;
     if (!userId) {
       return res.status(400).json({ status: 400, message: ERROR_MESSAGES.USER_ID_REQ });
     }
@@ -103,10 +144,11 @@ app.put('/users/:userId', function (req, res) {
 });
 
 app.delete('/users/:userId', function (req, res) {
+  if (!isAuthorized(req, res)) return;
   try {
     console.log('deleting a user');
   
-    const userId = Number(req.params.userId);
+    const userId = req.params.userId;
     if (!userId) {
       return res.status(400).json({ status: 400, message: ERROR_MESSAGES.USER_ID_REQ });
     }
